@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel da apuração — Presidente 2026</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--bg:#0e1621;--panel:#16212f;--line:#263548;--tx:#e8eef6;--mut:#95a5b8;--ok:#3ecf8e;--warn:#f0b429;--bad:#ff6b6b;--nodata:#3a4657}
+:root[data-theme=light]{--bg:#eef2f7;--panel:#fff;--line:#d3dbe6;--tx:#14202e;--mut:#56667a;--ok:#118a57;--warn:#9a6a00;--bad:#c0392b;--nodata:#c7d0dc}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+header,main{max-width:1280px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:0}h2{font-size:1.05rem;margin:0 0 10px}
+.top{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{border:1px solid var(--line);border-radius:999px;padding:2px 10px;font-size:.82rem;color:var(--mut)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--nodata)}
+.ok .dot{background:var(--ok)}.warn .dot{background:var(--warn)}.bad .dot{background:var(--bad)}
+.pulse .dot{animation:p 1.4s ease-out 1}@keyframes p{50%{transform:scale(1.9)}}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));margin:14px 0}
+.card,.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}
+.card b{display:block;font-size:1.55rem;font-variant-numeric:tabular-nums;line-height:1.2}.card span{color:var(--mut);font-size:.82rem}
+.cols{display:grid;gap:14px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}@media(max-width:900px){.cols{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left}th{color:var(--mut);font-weight:500;font-size:.82rem}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+#map{height:520px;border-radius:8px;background:var(--panel)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+select,button,input{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit}
+button{cursor:pointer}:focus-visible{outline:2px solid #4da3ff;outline-offset:2px}
+.legend{font-size:.82rem;color:var(--mut);margin-top:6px}.note{color:var(--mut);font-size:.82rem}
+.lbl{color:#fff;font:600 11px/1.2 system-ui;text-align:center;text-shadow:0 0 3px #000,0 0 3px #000;pointer-events:none;width:50px!important;margin:-14px 0 0 -25px!important}.leaflet-tooltip{background:var(--panel);color:var(--tx);border:1px solid var(--line)}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+ <div class="top">
+  <div><h1>Apuração — Presidente da República 2026</h1><div id="sub" class="note"></div></div>
+  <div><button id="theme" aria-label="Alternar tema claro/escuro">Tema</button></div>
+ </div>
+ <div class="chips" id="chips" role="status" aria-live="polite"></div>
+</header>
+<main>
+ <section class="grid" id="cards" aria-label="Indicadores nacionais"></section>
+ <div class="cols">
+  <section class="box"><h2>Mapa por unidade da Federação</h2>
+   <div class="bar">
+    <select id="mode" aria-label="Modo de visualização">
+     <option value="tot" selected>% apurado (seções totalizadas)</option><option value="lider">Candidato líder</option><option value="pct">% de votos do candidato</option><option value="margem">Margem entre os dois primeiros</option>
+     <option value="votos">Votos contabilizados</option><option value="comp">Comparecimento</option></select>
+    <select id="candSel" aria-label="Candidato" hidden></select>
+    <select id="ufSel" aria-label="Buscar UF"><option value="">Buscar UF…</option></select>
+    <button id="reset">Visão nacional</button>
+   </div>
+   <div id="map" role="application" aria-label="Mapa interativo do Brasil"></div>
+   <div class="legend" id="legend"></div>
+  </section>
+  <section class="box"><h2>Ranking nacional</h2><div id="rank"></div>
+   <h2 style="margin-top:18px" id="ufTitle">Detalhe da UF</h2><div id="ufDet" class="note">Clique em um estado no mapa.</div></section>
+ </div>
+ <p class="note" id="foot"></p>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const NF=new Intl.NumberFormat('pt-BR'),PF=new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fn=v=>v==null?'Não disponível':NF.format(v),fp=v=>v==null?'Não disponível':PF.format(v)+'%';
+const dtf=t=>t?new Date(t).toLocaleString('pt-BR'):'—';
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const COD={11:'RO',12:'AC',13:'AM',14:'RR',15:'PA',16:'AP',17:'TO',21:'MA',22:'PI',23:'CE',24:'RN',25:'PB',26:'PE',27:'AL',28:'SE',29:'BA',31:'MG',32:'ES',33:'RJ',35:'SP',41:'PR',42:'SC',43:'RS',50:'MS',51:'MT',52:'GO',53:'DF'};
+const PAL=['#0072B2','#D55E00','#009E73','#CC79A7','#E69F00','#56B4E9','#F0E442','#999999'];
+let S=null,geoLayer=null,map,color={};
+const pct=c=>c.pct??c.pctCalc, sorted=n=>[...n.cands].sort((a,b)=>(b.votos||0)-(a.votos||0));
+const root=document.documentElement;root.dataset.theme=localStorage.tema||'dark';
+document.getElementById('theme').onclick=()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';localStorage.tema=root.dataset.theme;draw()};
+
+map=L.map('map',{minZoom:3}).setView([-14,-52],4);
+function sit(m){ // situação dos dados de um arquivo
+  if(!m||m.status==='aguardando')return['Aguardando','warn'];
+  if(m.status==='nao_publicado')return['Não publicado','warn'];
+  if(m.status==='erro')return['Erro: '+m.error,'bad'];
+  return S.now-m.fetchedAt>S.pollMs*3?['Atrasado','warn']:['Atualizado','ok'];}
+function colorOf(n,uf){ // cor da UF conforme o modo
+  const m=document.getElementById('mode').value; if(!n||!n.cands.length)return null;
+  const r=sorted(n),a=r[0],b=r[1],t=n.tot,tv=r.reduce((s,c)=>s+(c.votos||0),0);
+  if(!tv&&m!=='tot'&&m!=='comp')return null;
+  const ramp=(x,h)=>`hsl(${h} 70% ${85-Math.min(1,Math.max(0,x))*50}%)`;
+  if(m==='lider')return color[a.n];
+  if(m==='pct'){const c=n.cands.find(c=>String(c.n)===document.getElementById('candSel').value);return c&&pct(c)!=null?ramp(pct(c)/100,color[c.n]?0:210):null}
+  if(m==='tot')return t.secPct==null?null:ramp(t.secPct/100,150);
+  if(m==='margem')return b?color[a.n]+Math.round(40+Math.min(1,(pct(a)-pct(b))/40)*215).toString(16).padStart(2,'0'):color[a.n];
+  if(m==='votos')return ramp(tv/(S.maxV||1),265);
+  if(m==='comp')return t.eleitorado&&t.comparecimento!=null?ramp((t.comparecimento/t.eleitorado-.6)/.4,35):null;}
+function tip(uf,name){
+  const n=S.ufs[uf],[st]=sit(S.meta[uf.toLowerCase()]);if(!n)return`<b>${esc(name)} (${uf})</b><br>Dados indisponíveis`;
+  const r=sorted(n),a=r[0],b=r[1],t=n.tot,fin=n.final;
+  return`<b>${esc(name)} (${uf})</b> — ${st}<br>${fin?'Líder':'À frente na apuração'}: ${esc(a.nome||a.n)}: ${fn(a.votos)} (${fp(pct(a))})`+
+  (b?`<br>2º: ${esc(b.nome||b.n)}: ${fn(b.votos)} (${fp(pct(b))})<br>Diferença: ${fn((a.votos||0)-(b.votos||0))} votos`:'')+
+  `<br>Seções totalizadas: ${fp(t.secPct)} (${fn(t.secTot)} tot. / ${fn(t.secPend)} pend.)<br>Votos contabilizados: ${fn(r.reduce((s,c)=>s+(c.votos||0),0))}<br>Atualização: ${esc(n.totalizadoEm||dtf(S.meta[uf.toLowerCase()]?.fetchedAt))}`;}
+function paint(){
+  if(!geoLayer)return; geoLayer.eachLayer(l=>{const uf=l.uf,c=colorOf(S.ufs[uf],uf),st=sit(S.meta[uf.toLowerCase()])[1];
+    l.setStyle({fillColor:c||getComputedStyle(root).getPropertyValue('--nodata'),fillOpacity:c?.9:.6,color:st==='ok'?'#0008':'#f0b429',weight:st==='ok'?1:2,dashArray:st==='ok'?null:'4'});
+    l.setTooltipContent(tip(uf,l.nome));const sp=S.ufs[uf]?.tot.secPct;l.lbl.setIcon(L.divIcon({className:'lbl',html:`<b>${uf}</b><br>${sp==null?'—':PF.format(sp).replace(',00','')+'%'}`}));});
+  const m=document.getElementById('mode').value,txt={lider:'Cor do candidato com mais votos até o momento (não é resultado definitivo).',pct:'Intensidade = % do candidato selecionado.',tot:'Intensidade = % de seções totalizadas.',margem:'Cor do líder; mais opaca = maior margem.',votos:'Intensidade = votos contabilizados.',comp:'Intensidade = comparecimento (c/e); só aparece se o TSE informar os campos.'};
+  document.getElementById('legend').innerHTML=esc(txt[m])+' Cinza = sem dados. Borda tracejada amarela = atrasado/indisponível.'+(m==='lider'?'<br>'+Object.entries(color).map(([n,c])=>`<span class="sw" style="background:${c}"></span>${esc(S.names[n]||n)}&nbsp;`).join(''):'');}
+function detail(uf,name){
+  const n=S.ufs[uf];document.getElementById('ufTitle').textContent=`${name} (${uf})`;
+  if(!n){document.getElementById('ufDet').textContent='Dados ainda não publicados ou indisponíveis.';return}
+  const t=n.tot;document.getElementById('ufDet').innerHTML=table(n)+`<p>Válidos: ${fn(t.validos)} · Brancos: ${fn(t.brancos)} · Nulos: ${fn(t.nulos)}<br>Eleitorado: ${fn(t.eleitorado)} · Comparecimento: ${fn(t.comparecimento)} · Abstenções: ${fn(t.abstencao)}<br>Seções: ${fp(t.secPct)} totalizadas · Totalização: ${esc(n.totalizadoEm||'—')}</p><p class="note">Tabela de municípios: não implementada nesta versão (requer arquivos municipais do EA20).</p>`;}
+function table(n){return`<table><thead><tr><th>Nº</th><th>Candidato</th><th>Votos</th><th>%</th></tr></thead><tbody>`+sorted(n).map(c=>`<tr><td>${esc(c.n)}</td><td><span class="sw" style="background:${color[c.n]}"></span>${esc(c.nome||'—')}${c.vice?'<br><span class="note">Vice: '+esc(c.vice)+'</span>':''}</td><td>${fn(c.votos)}</td><td>${fp(pct(c))}</td></tr>`).join('')+`</tbody></table>`}
+function draw(){
+  const n=S.national,[st,cl]=sit(S.meta.br),ufN=Object.keys(S.ufs).length;
+  document.getElementById('sub').textContent=`Eleição ${S.code} (${S.env}) · Fonte: TSE`;
+  document.getElementById('chips').innerHTML=`<span class="chip ${cl} pulse"><i class="dot"></i>${esc(st)}</span><span class="chip">Última atualização do TSE: ${esc(n?.totalizadoEm||n?.geradoEm||'Não disponível')}</span><span class="chip">Última consulta: ${dtf(S.meta.br?.fetchedAt)}</span><span class="chip">Totalização: ${n?n.final?'finalizada (and=f)':'em andamento':'sem dados'}</span><span class="chip">Assinatura digital: ${esc(S.assinatura)}</span>`;
+  const t=n?.tot||{},r=n?sorted(n):[],a=r[0],b=r[1],cont=n&&t.validos!=null?t.validos+(t.brancos||0)+(t.nulos||0):null;
+  const K=(l,v,s='')=>`<div class="card"><span>${l}</span><b>${v}</b><span>${s}</span></div>`;
+  document.getElementById('cards').innerHTML=K('Votos contabilizados',fn(cont),'válidos + brancos + nulos totalizados')+K('Votos válidos',fn(t.validos))+K('Brancos',fn(t.brancos))+K('Nulos',fn(t.nulos))+
+   K('Eleitorado apto',fn(t.eleitorado))+K('Comparecimento',fn(t.comparecimento),t.eleitorado&&t.comparecimento!=null?fp(t.comparecimento/t.eleitorado*100):'')+K('Abstenções',fn(t.abstencao),t.eleitorado&&t.abstencao!=null?fp(t.abstencao/t.eleitorado*100):'')+
+   K('Seções previstas',fn(t.secPrev))+K('Seções totalizadas',fn(t.secTot),fp(t.secPct))+K('Seções não totalizadas',fn(t.secPend))+
+   K('Diferença (1º − 2º)',a&&b?fn((a.votos||0)-(b.votos||0)):'Não disponível',a&&b?fp(pct(a)-pct(b)).replace('%',' p.p.'):'')+K('UFs com resultados',`${ufN} de 27`)+K('Municípios com resultados','Não disponível','requer arquivos municipais');
+  document.getElementById('rank').innerHTML=n?table(n)+'<p class="note">% = informado pelo TSE (pvap); se ausente, calculado sobre a soma dos votos nominais.</p>':'Sem dados nacionais ainda.';
+  paint();}
+async function load(){
+  try{S=await (await fetch('/api/state')).json()}catch(e){document.getElementById('chips').innerHTML='<span class="chip bad"><i class="dot"></i>Servidor local indisponível</span>';return}
+  const all=Object.values(S.ufs).flatMap(n=>n.cands);S.names={};
+  [...new Set((S.national?S.national.cands:all).map(c=>c.n))].sort((a,b)=>a-b).forEach((n,i)=>{color[n]=PAL[i%PAL.length]});
+  all.concat(S.national?.cands||[]).forEach(c=>S.names[c.n]=c.nome);
+  S.maxV=Math.max(1,...Object.values(S.ufs).map(n=>n.cands.reduce((s,c)=>s+(c.votos||0),0)));
+  const cs=document.getElementById('candSel'),cur=cs.value;cs.innerHTML=Object.keys(color).map(n=>`<option value="${n}">${esc(S.names[n]||n)}</option>`).join('');if(cur)cs.value=cur;
+  draw();}
+document.getElementById('mode').onchange=()=>{document.getElementById('candSel').hidden=document.getElementById('mode').value!=='pct';paint()};
+document.getElementById('candSel').onchange=paint;
+document.getElementById('reset').onclick=()=>map.setView([-14,-52],4);
+fetch('/api/geo').then(r=>r.json()).then(g=>{
+  const u=document.getElementById('ufSel');
+  geoLayer=L.geoJSON(g,{style:{weight:1},onEachFeature:(f,l)=>{const uf=COD[+f.properties.codarea];l.uf=uf;l.nome=uf;l.lbl=L.marker(l.getBounds().getCenter(),{interactive:false,keyboard:false,icon:L.divIcon({className:'lbl'})}).addTo(map);
+    l.bindTooltip('',{sticky:true});l.on('click',()=>{map.fitBounds(l.getBounds());detail(uf,l.nome)});}}).addTo(map);
+  Object.values(COD).sort().forEach(uf=>u.insertAdjacentHTML('beforeend',`<option>${uf}</option>`));
+  u.onchange=()=>geoLayer.eachLayer(l=>{if(l.uf===u.value){map.fitBounds(l.getBounds());detail(l.uf,l.nome)}});
+  if(S)paint();}).catch(()=>document.getElementById('foot').textContent='Não foi possível carregar a malha do IBGE.');
+load();setInterval(load,15000);
+document.getElementById('foot').textContent='Os números são parciais enquanto a totalização não for finalizada. Campos ausentes aparecem como "Não disponível".';
+</script>
+</body>
+</html>
